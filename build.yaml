@@ -1,0 +1,9 @@
+targets:
+  $default:
+    builders:
+      graphql_codegen|graphql_codegen:
+        enabled: true
+        options:
+          schema: lib/graphql/schema.json    # スキーマファイルのパス（JSON形式が多い）
+          queries_glob: lib/graphql/queries.graphql  # クエリファイルのパス
+          output: lib/graphql/generated/      # 出力先ディレクトリ

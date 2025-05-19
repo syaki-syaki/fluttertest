@@ -1,0 +1,105 @@
+query GetRepositories($username: String!) {  # 🔹 `viewer` を `user` に変更
+  user(login: $username) {
+    repositories(first: 10) {
+      nodes {
+        id
+        name
+        url
+        description
+        owner {
+          login
+        }
+      }
+    }
+  }
+}
+
+
+
+
+
+
+
+query GetViewer {
+  viewer {
+    login
+  }
+}
+query GetIssues($username: String!, $repositoryName: String!, $first: Int, $after: String) {
+  repository(owner: $username, name: $repositoryName) {
+    issues(first: $first, after: $after) {
+      nodes {
+        id
+        title
+        body
+        url
+      }
+    }
+  }
+}
+
+
+
+mutation DeleteIssue($issueId: ID!) {
+  deleteIssue(input: { issueId: $issueId }) {
+    clientMutationId
+  }
+}
+
+mutation CreateIssue($repositoryId: ID!, $title: String!, $body: String) {
+  createIssue(input: { repositoryId: $repositoryId, title: $title, body: $body }) {
+    issue {
+      id
+      title
+      body
+    }
+  }
+}
+
+
+query GetUserRepositories($username: String!) {
+  user(login: $username) {
+    repositories(first: 10) {
+      nodes {
+        name
+        url
+        description
+        owner {
+          login
+        }
+      }
+    }
+  }
+}
+mutation UpdateIssue($id: ID!, $title: String!, $body: String) {
+  updateIssue(input: { id: $id, title: $title, body: $body }) {
+    issue {
+      id
+      title
+      body
+    }
+  }
+}
+
+query SearchRepositories($query: String!, $first: Int!, $after: String) {
+  search(query: $query, type: REPOSITORY, first: $first, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    edges {
+      node {
+        ... on Repository {
+          id
+          name
+          description
+          url
+          owner {
+            login
+          }
+
+        }
+      }
+    }
+  }
+}
