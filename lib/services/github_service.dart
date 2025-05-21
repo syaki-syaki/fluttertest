@@ -1,132 +1,63 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:graphql_flutter/graphql_flutter.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:testflutter/graphql/queries.graphql';
-import 'package:testflutter/graphql/mutations.dart';
+import 'package:testflutter/graphql/queries.graphql.dart';
 
 class GitHubService {
   final GraphQLClient client;
-
   GitHubService({required this.client});
 
+  /* ---------- クエリ ---------- */
   Future<String?> getViewerUsername() async {
-    final result = await client.query(QueryOptions(
-      document: gql(getViewerQuery),
-    ));
-    if (result.hasException) return null;
-    return result.data?['viewer']?['login'];
-  }
-
-  Future<List<Map<String, dynamic>>> getUserRepositories(String username) async {
-    final result = await client.query(QueryOptions(
-      document: gql(getUserRepositoriesQuery),
-      variables: {'username': username},
-    ));
-    if (result.hasException) return [];
-    return List<Map<String, dynamic>>.from(
-      result.data?['user']?['repositories']?['nodes'] ?? [],
+    final r = await client.query(
+      QueryOptions(document: documentNodeQueryGetViewer),
     );
+    if (r.hasException) return null;
+    return r.data?['viewer']?['login'];
   }
 
-  Future<List<Map<String, dynamic>>> getRepository(String username) async {
-    final result = await client.query(QueryOptions(
-      document: gql(getUserRepositoriesQuery),
-      variables: {'username': username},
-    ));
-    if (result.hasException) return [];
-    return List<Map<String, dynamic>>.from(
-      result.data?['user']?['repositories']?['nodes'] ?? [],
+  Future<List<Map<String, dynamic>>> searchRepositories({
+    required String keyword,
+    required int minStars,
+    int first = 25,
+    String? after,
+  }) async {
+    final q = [
+      if (keyword.trim().isNotEmpty) keyword.trim(),
+      if (minStars > 0) 'stars:>=$minStars',
+      'sort:stars-desc'
+    ].join(' ');
+
+    final r = await client.query(
+      QueryOptions(
+        document: documentNodeQuerySearchRepositories,
+        variables: {'query': q, 'first': first, 'after': after},
+      ),
     );
-  }
-
-  Future<List<Map<String, dynamic>>> searchRepositories(String query, int first, {String? after}) async {
-    final result = await client.query(QueryOptions(
-      document: gql(searchRepositoriesQuery),
-      variables: {
-        'query': query,
-        'first': first,
-        'after': after,
-      },
-    ));
-    if (result.hasException) {
-      print('[ERROR] searchRepositories失敗: ${result.exception.toString()}');
+    if (r.hasException) {
+      print('[ERROR] searchRepositories 失敗: ${r.exception}');
       return [];
     }
-
     return List<Map<String, dynamic>>.from(
-      (result.data?['search']?['edges'] as List?)?.map((e) => e?['node']) ?? [],
+      (r.data?['search']?['edges'] as List?)?.map((e) => e?['node']) ?? [],
     );
   }
 
   Future<List<Map<String, dynamic>>> getIssues(
-      String username, String repositoryName, int first,
+      String username, String repo, int first,
       {String? after}) async {
-    final result = await client.query(QueryOptions(
-      document: gql(getIssuesQuery),
-      variables: {
-        'username': username,
-        'repositoryName': repositoryName,
-        'first': first,
-        'after': after,
-      },
-    ));
-    if (result.hasException) return [];
+    final r = await client.query(
+      QueryOptions(
+        document: documentNodeQueryGetIssues,
+        variables: {
+          'username': username,
+          'repositoryName': repo,
+          'first': first,
+          'after': after,
+        },
+      ),
+    );
+    if (r.hasException) return [];
     return List<Map<String, dynamic>>.from(
-      result.data?['repository']?['issues']?['nodes'] ?? [],
+      r.data?['repository']?['issues']?['nodes'] ?? [],
     );
   }
-
-  Future<void> createIssue(String repositoryId, String title, String? body) async {
-    await client.mutate(MutationOptions(
-      document: gql(createIssueMutation),
-      variables: {
-        'repositoryId': repositoryId,
-        'title': title,
-        'body': body,
-      },
-    ));
-  }
-
-  Future<bool> deleteIssue(String issueId) async {
-    final result = await client.mutate(MutationOptions(
-      document: gql(deleteIssueMutation),
-      variables: {'issueId': issueId},
-    ));
-    if (result.hasException) return false;
-    return result.data?['deleteIssue'] != null;
-  }
-
-  Future<void> updateIssue(String issueId, String title, String body) async {
-    await client.mutate(MutationOptions(
-      document: gql(updateIssueMutation),
-      variables: {
-        'id': issueId,
-        'title': title,
-        'body': body,
-      },
-    ));
-  }
 }
-
-final githubServiceProvider = FutureProvider<GitHubService>((ref) async {
-  final prefs = await SharedPreferences.getInstance();
-  final token = prefs.getString('GitHubToken');
-
-  if (token == null || token.isEmpty) {
-    throw Exception('GitHub token not found');
-  }
-
-  final link = HttpLink(
-    'https://api.github.com/graphql',
-    defaultHeaders: {
-      'Authorization': 'Bearer $token',
-    },
-  );
-
-  final client = GraphQLClient(
-    link: link,
-    cache: GraphQLCache(store: InMemoryStore()),
-  );
-
-  return GitHubService(client: client);
-});

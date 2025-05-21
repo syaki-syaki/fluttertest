@@ -1,4 +1,4 @@
-query GetRepositories($username: String!) {  # 🔹 `viewer` を `user` に変更
+query GetRepositories($username: String!) {  # 🔹 viewer を user に変更
   user(login: $username) {
     repositories(first: 10) {
       nodes {
@@ -6,6 +6,7 @@ query GetRepositories($username: String!) {  # 🔹 `viewer` を `user` に変�
         name
         url
         description
+        stargazerCount
         owner {
           login
         }
@@ -61,9 +62,11 @@ query GetUserRepositories($username: String!) {
   user(login: $username) {
     repositories(first: 10) {
       nodes {
+        id
         name
         url
         description
+        stargazerCount
         owner {
           login
         }
@@ -94,6 +97,7 @@ query SearchRepositories($query: String!, $first: Int!, $after: String) {
           name
           description
           url
+          stargazerCount
           owner {
             login
           }

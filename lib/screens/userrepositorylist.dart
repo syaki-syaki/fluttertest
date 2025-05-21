@@ -2,70 +2,83 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:testflutter/models/repository.dart';
+import 'package:testflutter/providers/github_service_provider.dart';
+import 'package:testflutter/screens/issuelist.dart';
 import 'package:testflutter/services/github_service.dart';
-import 'package:testflutter/screens/issuelist.dart'; // ← Issuelist が定義されているファイルを import
-
-final githubServiceProvider = Provider<GitHubService>((ref) {
-  throw UnimplementedError('GitHubService must be overridden');
-});
 
 class UserRepositoryListScreen extends ConsumerStatefulWidget {
-  final String repositoryName;
   final String keyword;
+  final int stars;
 
   const UserRepositoryListScreen({
     super.key,
-    required this.repositoryName,
     required this.keyword,
+    required this.stars,
   });
 
   @override
-  ConsumerState<UserRepositoryListScreen> createState() => _UserRepositoryListScreenState();
+  ConsumerState<UserRepositoryListScreen> createState() =>
+      _UserRepositoryListScreenState();
 }
 
-class _UserRepositoryListScreenState extends ConsumerState<UserRepositoryListScreen> {
+class _UserRepositoryListScreenState
+    extends ConsumerState<UserRepositoryListScreen> {
   List<Repository> _repositories = [];
   int _currentPage = 1;
   bool _hasNextPage = true;
   String? _username;
+  GitHubService? _service;
 
   @override
   void initState() {
     super.initState();
-    _fetchUsernameAndLoadRepositories();
+    ref.read(githubServiceProvider).whenData((s) {
+      _service = s;
+      _fetchUsernameAndLoadRepositories();
+    });
   }
 
   Future<void> _fetchUsernameAndLoadRepositories() async {
-    final githubService = ref.read(githubServiceProvider);
     final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString('GitHubUsername');
 
-    try {
-      final username = await githubService.getViewerUsername();
-      if (username != null) {
-        setState(() => _username = username);
-        await prefs.setString('GitHubUsername', username);
-        _loadUserRepositories();
-      } else {
+    if (cached != null) {
+      _username = cached;
+      _loadUserRepositories();
+      return;
+    }
+
+    final username = await _service?.getViewerUsername();
+    if (username == null) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('ユーザー名の取得に失敗しました。')),
         );
         Navigator.pop(context);
       }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('エラー: $e')),
-      );
+      return;
     }
+
+    _username = username;
+    await prefs.setString('GitHubUsername', username);
+    _loadUserRepositories();
   }
 
   Future<void> _loadUserRepositories() async {
-    if (_username == null) return;
-    final githubService = ref.read(githubServiceProvider);
-    final result = await githubService.getUserRepositories(_username!);
+    final service = _service;
+    final username = _username;
+    if (service == null || username == null) return;
+
+    final repos = await service.searchRepositories(
+      keyword: 'user:$username ${widget.keyword}',
+      minStars: widget.stars,
+      first: 25,
+      after: null,
+    );
 
     setState(() {
-      _repositories = result.map((repoJson) => Repository.fromJson(repoJson)).toList();
-      _hasNextPage = _repositories.length == 10;
+      _repositories = repos.map(Repository.fromJson).toList();
+      _hasNextPage = _repositories.length == 25;
     });
   }
 
@@ -78,23 +91,20 @@ class _UserRepositoryListScreenState extends ConsumerState<UserRepositoryListScr
           Expanded(
             child: ListView.builder(
               itemCount: _repositories.length,
-              itemBuilder: (context, index) {
+              itemBuilder: (_, index) {
                 final repo = _repositories[index];
                 return ListTile(
                   title: Text(repo.name),
                   subtitle: Text(repo.description ?? 'No description'),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => IssueListScreen(
-                          repositoryName: repo.name,
-                          username: repo.owner, // .login は不要、ownerがString型ならこれでOK
-                        ),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => IssueListScreen(
+                        username: repo.owner,
+                        repositoryName: repo.name,
                       ),
-                    );
-                  },
-
+                    ),
+                  ),
                 );
               },
             ),

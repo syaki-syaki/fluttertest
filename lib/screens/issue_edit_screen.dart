@@ -1,10 +1,8 @@
-// lib/screens/edit_issue_screen.dart
-import 'package:graphql_flutter/graphql_flutter.dart';
 import 'package:flutter/material.dart';
-import 'package:testflutter/services/github_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:testflutter/providers/github_service_provider.dart';
 
-class EditIssueScreen extends StatefulWidget {
+class EditIssueScreen extends ConsumerStatefulWidget {
   final String issueId;
   final String repositoryName;
   final String issueTitle;
@@ -19,114 +17,82 @@ class EditIssueScreen extends StatefulWidget {
   });
 
   @override
-  State<EditIssueScreen> createState() => _EditIssueScreenState();
+  ConsumerState<EditIssueScreen> createState() => _EditIssueScreenState();
 }
 
-class _EditIssueScreenState extends State<EditIssueScreen> {
-  late TextEditingController _titleController;
-  late TextEditingController _bodyController;
+class _EditIssueScreenState extends ConsumerState<EditIssueScreen> {
+  late final TextEditingController _title =
+  TextEditingController(text: widget.issueTitle);
+  late final TextEditingController _body =
+  TextEditingController(text: widget.issueBody);
+  bool _saving = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _titleController = TextEditingController(text: widget.issueTitle);
-    _bodyController = TextEditingController(text: widget.issueBody);
-  }
-
-  @override
-  void dispose() {
-    _titleController.dispose();
-    _bodyController.dispose();
-    super.dispose();
-  }
-
-
-  Future<void> _saveIssue() async {
-    final title = _titleController.text.trim();
-    final body = _bodyController.text.trim();
-
-    if (title.isEmpty) {
+  Future<void> _save() async {
+    if (_title.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('タイトルを入力してください')),
       );
       return;
     }
 
+    setState(() => _saving = true);
+    final service = ref.read(githubServiceProvider).value;
+    if (service == null) return;
+
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('GitHubToken') ?? '';
-
-      if (token.isEmpty) {
-        throw Exception('トークンが保存されていません');
-      }
-
-      final client = GraphQLClient(
-        link: HttpLink(
-          'https://api.github.com/graphql',
-          defaultHeaders: {
-            'Authorization': 'Bearer $token',
-          },
-        ),
-        cache: GraphQLCache(store: InMemoryStore()),
-      );
-
-      final githubService = GitHubService(client: client);
-
-      await githubService.updateIssue(
+      await service.updateIssue(
         widget.issueId,
-        title,
-        body,
+        _title.text.trim(),
+        _body.text.trim(),
       );
-
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('イシューを編集しました')),
       );
       Navigator.pop(context, true);
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('編集に失敗しました: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('編集に失敗しました: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('イシュー編集')),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            TextField(
-              controller: _titleController,
-              decoration: const InputDecoration(labelText: 'タイトル'),
-            ),
+            TextField(controller: _title, decoration: const InputDecoration(labelText: 'タイトル')),
             const SizedBox(height: 12),
             TextField(
-              controller: _bodyController,
+              controller: _body,
               decoration: const InputDecoration(labelText: '本文'),
               maxLines: 5,
             ),
             const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                ElevatedButton(
-                  onPressed: _saveIssue,
-                  child: const Text('保存'),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('キャンセル'),
-                ),
-              ],
-            )
+            ElevatedButton(
+              onPressed: _saving ? null : _save,
+              child: _saving
+                  ? const CircularProgressIndicator()
+                  : const Text('保存'),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _body.dispose();
+    super.dispose();
   }
 }

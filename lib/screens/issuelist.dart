@@ -1,11 +1,10 @@
-// lib/screens/issue_list_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:testflutter/models/issue.dart';
+import 'package:testflutter/providers/github_service_provider.dart';
+import 'create_issue_screen.dart';
+import 'edit_issue_screen.dart';
 import 'package:testflutter/services/github_service.dart';
-import 'issue_edit_screen.dart';
-import 'issuecrate.dart';
 
 class IssueListScreen extends ConsumerStatefulWidget {
   final String username;
@@ -24,93 +23,60 @@ class IssueListScreen extends ConsumerStatefulWidget {
 class _IssueListScreenState extends ConsumerState<IssueListScreen> {
   List<Issue> _issues = [];
   int _currentPage = 1;
-  bool _hasNextPage = true;
-  bool _isLoading = false;
-  GitHubService? _cachedService;
+  bool _hasNext = true;
+  bool _loading = false;
   String? _endCursor;
+  GitHubService? _service;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    ref.listen<AsyncValue<GitHubService>>(githubServiceProvider,
+            (_, next) => next.whenData(_initIfNeeded));
+  }
 
-    final asyncService = ref.watch(githubServiceProvider);
-    asyncService.whenData((service) {
-      if (_cachedService == null) {
-        _cachedService = service;
-        print('[DEBUG] GitHubService インスタンスを初期化');
-        _loadIssues(service);
-      }
+  void _initIfNeeded(GitHubService s) {
+    if (_service == null) {
+      _service = s;
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    if (_service == null) return;
+    setState(() => _loading = true);
+
+    final data = await _service!.getIssues(
+      widget.username,
+      widget.repositoryName,
+      25,
+      after: _currentPage > 1 ? _endCursor : null,
+    );
+    final list = data.map(Issue.fromJson).toList();
+
+    setState(() {
+      _issues = list;
+      _hasNext = list.length == 25;
+      _endCursor = _hasNext ? list.last.id : null;
+      _loading = false;
     });
   }
 
-  Future<void> _loadIssues(GitHubService githubService) async {
-    setState(() => _isLoading = true);
-    print('[DEBUG] Issueロード開始 (page: $_currentPage, endCursor: $_endCursor)');
-
-    try {
-      final result = await githubService.getIssues(
-        widget.username,
-        widget.repositoryName,
-        25,
-        after: _currentPage > 1 ? _endCursor : null,
-      );
-
-      print('[DEBUG] 取得したデータ: ${result.length} 件');
-      for (var i = 0; i < result.length; i++) {
-        print('[DEBUG] Issue[$i]: ${result[i]['title']} (${result[i]['id']})');
-      }
-
-      final issuesData = result.map((json) => Issue.fromJson(json)).toList();
-
-      setState(() {
-        _issues = issuesData;
-        _hasNextPage = issuesData.length == 25;
-        _isLoading = false;
-        if (_hasNextPage && issuesData.isNotEmpty) {
-          _endCursor = issuesData.last.id;
-          print('[DEBUG] 次のページ用 endCursor: $_endCursor');
-        }
-      });
-    } catch (e, stack) {
-      print('[ERROR] Issue取得失敗: $e');
-      print('[STACK] $stack');
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('エラー: $e')),
-      );
-    }
-  }
-
-  Future<void> _deleteIssue(String issueId) async {
-    if (_cachedService == null) return;
-
-    try {
-      print('[DEBUG] イシュー削除リクエスト: $issueId');
-      await _cachedService!.deleteIssue(issueId);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('イシューを削除しました')),
-      );
-      _loadIssues(_cachedService!);
-    } catch (e) {
-      print('[ERROR] イシュー削除失敗: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('削除に失敗しました: $e')),
-      );
-    }
+  Future<void> _delete(String id) async {
+    if (_service == null) return;
+    await _service!.deleteIssue(id);
+    _load();
   }
 
   @override
   Widget build(BuildContext context) {
-    final githubServiceAsync = ref.watch(githubServiceProvider);
+    final serviceAsync = ref.watch(githubServiceProvider);
 
-    return githubServiceAsync.when(
+    return serviceAsync.when(
       loading: () => const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       ),
-      error: (err, stack) {
-        print('[ERROR] GitHubServiceProvider エラー: $err');
-        return Scaffold(body: Center(child: Text('エラー: $err')));
-      },
+      error: (e, _) => Scaffold(body: Center(child: Text('エラー: $e'))),
       data: (_) => Scaffold(
         appBar: AppBar(title: const Text('Issue一覧')),
         body: Column(
@@ -120,53 +86,36 @@ class _IssueListScreenState extends ConsumerState<IssueListScreen> {
                   ? const Center(child: Text('Issueが見つかりません'))
                   : ListView.builder(
                 itemCount: _issues.length,
-                padding: const EdgeInsets.all(8),
-                itemBuilder: (context, index) {
-                  final issue = _issues[index];
-                  return Card(
-                    elevation: 4,
-                    margin: const EdgeInsets.symmetric(vertical: 8),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: ListTile(
-                      title: Text(issue.title),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 4),
-                          Text(issue.body ?? ''),
-                        ],
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit),
-                            onPressed: () async {
-                              print('[DEBUG] 編集開始: ${issue.id}');
-                              final result = await Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => EditIssueScreen(
-                                    issueId: issue.id,
-                                    repositoryName: widget.repositoryName,
-                                    issueTitle: issue.title,
-                                    issueBody: issue.body ?? '',
-                                  ),
+                itemBuilder: (_, i) {
+                  final issue = _issues[i];
+                  return ListTile(
+                    title: Text(issue.title),
+                    subtitle: Text(issue.body ?? ''),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit),
+                          onPressed: () async {
+                            final updated = await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => EditIssueScreen(
+                                  issueId: issue.id,
+                                  repositoryName: widget.repositoryName,
+                                  issueTitle: issue.title,
+                                  issueBody: issue.body ?? '',
                                 ),
-                              );
-                              if (result == true) {
-                                _loadIssues(_cachedService!);
-                              }
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.delete),
-                            onPressed: () => _deleteIssue(issue.id),
-                          )
-                        ],
-                      ),
+                              ),
+                            );
+                            if (updated == true) _load();
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete),
+                          onPressed: () => _delete(issue.id),
+                        ),
+                      ],
                     ),
                   );
                 },
@@ -176,23 +125,13 @@ class _IssueListScreenState extends ConsumerState<IssueListScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 ElevatedButton(
-                  onPressed: _currentPage > 1 && !_isLoading
-                      ? () {
-                    setState(() => _currentPage--);
-                    print('[DEBUG] 前のページ ($_currentPage)');
-                    _loadIssues(_cachedService!);
-                  }
-                      : null,
+                  onPressed:
+                  _currentPage > 1 && !_loading ? () { setState(() => _currentPage--); _load(); } : null,
                   child: const Text('前のページ'),
                 ),
                 ElevatedButton(
-                  onPressed: _hasNextPage && !_isLoading
-                      ? () {
-                    setState(() => _currentPage++);
-                    print('[DEBUG] 次のページ ($_currentPage)');
-                    _loadIssues(_cachedService!);
-                  }
-                      : null,
+                  onPressed:
+                  _hasNext && !_loading ? () { setState(() => _currentPage++); _load(); } : null,
                   child: const Text('次のページ'),
                 ),
               ],
@@ -200,8 +139,7 @@ class _IssueListScreenState extends ConsumerState<IssueListScreen> {
             const SizedBox(height: 10),
             ElevatedButton(
               onPressed: () async {
-                print('[DEBUG] 新規Issue作成画面へ');
-                final result = await Navigator.push(
+                final created = await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => CreateIssueScreen(
@@ -210,7 +148,7 @@ class _IssueListScreenState extends ConsumerState<IssueListScreen> {
                     ),
                   ),
                 );
-                if (result == true) _loadIssues(_cachedService!);
+                if (created == true) _load();
               },
               child: const Text('新規Issue作成'),
             ),
